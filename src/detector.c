@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "network.h"
 #include "region_layer.h"
 #include "cost_layer.h"
@@ -188,6 +189,27 @@ static void print_cocos(FILE *fp, char *image_path, box *boxes, float **probs, i
     }
 }
 
+void print_detector_detections_as_tsv(FILE *fps, char *id, float thresh, box *boxes, float **probs, int total, int classes, char ** names, int w, int h)
+{
+    int i, j;
+    for(i = 0; i < total; ++i){
+        float xmin = (boxes[i].x - boxes[i].w/2.)*w;
+        float xmax = (boxes[i].x + boxes[i].w/2.)*w;
+        float ymin = (boxes[i].y - boxes[i].h/2.)*h;
+        float ymax = (boxes[i].y + boxes[i].h/2.)*h;
+
+        if (xmin < 0) xmin = 0;
+        if (ymin < 0) ymin = 0;
+        if (xmax > w) xmax = w;
+        if (ymax > h) ymax = h;
+
+        for(j = 0; j < classes; ++j){
+            //if (probs[i][j]>thresh) fprintf(fps, "%s\t%s\t%f\t%f\t%f\t%f\t%f\n", id, names[j], probs[i][j],
+            if (probs[i][j]>thresh) fprintf(fps, "%s\t%s\t%f\t%d\t%d\t%d\t%d\n", id, names[j], probs[i][j],
+                    (int)xmin, (int)ymin, (int)xmax, (int)ymax);
+        }
+    }
+}
 void print_detector_detections(FILE **fps, char *id, box *boxes, float **probs, int total, int classes, int w, int h)
 {
     int i, j;
@@ -444,7 +466,7 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
     char *name_list = option_find_str(options, "names", "data/names.list");
     char **names = get_labels(name_list);
 
-    image **alphabet = load_alphabet();
+//    image **alphabet = load_alphabet();
     network net = parse_network_cfg(cfgfile);
     if(weightfile){
         load_weights(&net, weightfile);
@@ -453,19 +475,22 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
     srand(2222222);
     clock_t time;
     char buff[256];
+    char output[256];
     char *input = buff;
     int j;
     float nms=.4;
-    while(1){
-        if(filename){
-            strncpy(input, filename, 256);
-        } else {
-            printf("Enter Image Path: ");
-            fflush(stdout);
-            input = fgets(input, 256, stdin);
-            if(!input) return;
-            strtok(input, "\n");
-        }
+    FILE *fp=fopen(filename,"rt");
+    const char *EXT=".tsv";
+    printf("Using threshold : %f\n",thresh);
+    while(fgets(input,255,fp)!=NULL) {
+        int len=strlen(input);
+        while(len>0 && (input[len-1]=='\r' || input[len-1]=='\n' || input[len-1]==' ')) {
+		input[len-1]=0;
+		len--;
+	}
+	if(len==0) {
+		break;
+	}
         image im = load_image_color(input,0,0);
         image sized = resize_image(im, net.w, net.h);
         layer l = net.layers[net.n-1];
@@ -481,20 +506,31 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
         get_region_boxes(l, 1, 1, thresh, probs, boxes, 0, 0, hier_thresh);
         if (l.softmax_tree && nms) do_nms_obj(boxes, probs, l.w*l.h*l.n, l.classes, nms);
         else if (nms) do_nms_sort(boxes, probs, l.w*l.h*l.n, l.classes, nms);
-        draw_detections(im, l.w*l.h*l.n, thresh, boxes, probs, names, alphabet, l.classes);
-        save_image(im, "predictions");
-        show_image(im, "predictions");
+        //draw_detections(im, l.w*l.h*l.n, thresh, boxes, probs, names, alphabet, l.classes);
+
+// TODO
+//void print_detector_detections(FILE **fps, char *id, box *boxes, float **probs, int total, int classes, int w, int h)
+	strcpy(output,input);
+	char *dot=strrchr(output,'.');
+	strcpy(dot,EXT);
+	FILE *fps=fopen(output,"wt");
+        print_detector_detections_as_tsv(fps, input, thresh, boxes, probs, l.w*l.h*l.n, l.classes, names, net.w, net.h);
+	fclose(fps);
+
+        //save_image(im, "predictions");
+        //show_image(im, "predictions");
 
         free_image(im);
         free_image(sized);
         free(boxes);
         free_ptrs((void **)probs, l.w*l.h*l.n);
 #ifdef OPENCV
-        cvWaitKey(0);
-        cvDestroyAllWindows();
+        //cvWaitKey(0);
+        //cvDestroyAllWindows();
 #endif
-        if (filename) break;
+        //if (filename) break;
     }
+    fclose(fp);
 }
 
 void run_detector(int argc, char **argv)
